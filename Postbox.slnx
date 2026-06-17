@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/Postbox.Sample.WebApi/Postbox.Sample.WebApi.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Postbox.Core/Postbox.Core.csproj" />
+    <Project Path="src/Postbox.EFCore/Postbox.EFCore.csproj" />
+    <Project Path="src/Postbox.PostgreSQL/Postbox.PostgreSQL.csproj" />
+    <Project Path="src/Postbox.SqlServer/Postbox.SqlServer.csproj" />
+    <Project Path="src/Postbox.Transport.InMemory/Postbox.Transport.InMemory.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Postbox.Core.Tests/Postbox.Core.Tests.csproj" />
+    <Project Path="tests/Postbox.Integration.Tests/Postbox.Integration.Tests.csproj" />
+  </Folder>
+</Solution>
