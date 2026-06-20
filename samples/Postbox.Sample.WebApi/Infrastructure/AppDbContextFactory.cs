@@ -7,10 +7,18 @@ public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
 {
     public AppDbContext CreateDbContext(string[] args)
     {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql("Host=localhost;Port=5432;Database=Postbox;Username=postgres;Password=Post@20261406")
-            .Options;
+        var provider = args.FirstOrDefault(a => a.StartsWith("--DbProvider="))
+            ?.Replace("--DbProvider=", "") ?? "Postgres";
 
-        return new AppDbContext(options);
+        var optionsBuilder = new DbContextOptionsBuilder<AppDbContext>();
+
+        if (provider == "SqlServer")
+            optionsBuilder.UseSqlServer(
+                "Server=localhost,1433;Database=Postbox;User Id=sa;Password=Post@20261406;TrustServerCertificate=True");
+        else
+            optionsBuilder.UseNpgsql(
+                "Host=localhost;Port=5432;Database=Postbox;Username=postgres;Password=Post@20261406");
+
+        return new AppDbContext(optionsBuilder.Options);
     }
 }

@@ -4,8 +4,8 @@ using Postbox.EFCore;
 using Postbox.PostgreSQL;
 using Postbox.Sample.WebApi.Domain;
 using Postbox.Sample.WebApi.Infrastructure;
-using Postbox.Transport.InMemory;
 using Postbox.Transport.RabbitMQ;
+using Postbox.SqlServer;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,20 +15,39 @@ builder.Services.AddOpenApi();
 
 builder.Services.AddSingleton<OutboxInterceptor>();
 
-builder.Services.AddDbContext<AppDbContext>((sp, options) =>
-    options
-        .UseNpgsql(builder.Configuration.GetConnectionString("Postbox"))
-        .AddInterceptors(sp.GetRequiredService<OutboxInterceptor>()));
+var dbProvider = builder.Configuration["DbProvider"]; // "Postgres" or "SqlServer"
+
+if (dbProvider == "SqlServer")
+{
+    builder.Services.AddDbContext<AppDbContext>((sp, options) =>
+        options
+            .UseSqlServer(builder.Configuration.GetConnectionString("PostboxSqlServer"))
+            .AddInterceptors(sp.GetRequiredService<OutboxInterceptor>()));
+    builder.Services.AddSingleton<IOutboxSchemaProvider, SqlServerSchemaProvider>();
+}
+else
+{
+    builder.Services.AddDbContext<AppDbContext>((sp, options) =>
+        options
+            .UseNpgsql(builder.Configuration.GetConnectionString("Postbox"))
+            .AddInterceptors(sp.GetRequiredService<OutboxInterceptor>()));
+    builder.Services.AddSingleton<IOutboxSchemaProvider, PostgreSqlSchemaProvider>();
+}
 
 builder.Services.AddScoped<DbContext>(sp => sp.GetRequiredService<AppDbContext>());
-
-builder.Services.AddSingleton<IOutboxSchemaProvider, PostgreSqlSchemaProvider>();
 builder.Services.AddRabbitMQTransport(
     hostName: "127.0.0.1",
     port: 5672);
 builder.Services.AddHostedService<OutboxProcessor>();
 
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var schema = scope.ServiceProvider.GetRequiredService<IOutboxSchemaProvider>();
+    await db.Database.ExecuteSqlRawAsync(schema.GetCreateSchemaSql());
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
