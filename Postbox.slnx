@@ -8,6 +8,7 @@
     <Project Path="src/Postbox.PostgreSQL/Postbox.PostgreSQL.csproj" />
     <Project Path="src/Postbox.SqlServer/Postbox.SqlServer.csproj" />
     <Project Path="src/Postbox.Transport.InMemory/Postbox.Transport.InMemory.csproj" />
+    <Project Path="src/Postbox.Transport.RabbitMQ/Postbox.Transport.RabbitMQ.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Postbox.Core.Tests/Postbox.Core.Tests.csproj" />

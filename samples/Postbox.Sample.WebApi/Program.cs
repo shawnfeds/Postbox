@@ -5,6 +5,7 @@ using Postbox.PostgreSQL;
 using Postbox.Sample.WebApi.Domain;
 using Postbox.Sample.WebApi.Infrastructure;
 using Postbox.Transport.InMemory;
+using Postbox.Transport.RabbitMQ;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,7 +23,9 @@ builder.Services.AddDbContext<AppDbContext>((sp, options) =>
 builder.Services.AddScoped<DbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
 builder.Services.AddSingleton<IOutboxSchemaProvider, PostgreSqlSchemaProvider>();
-builder.Services.AddSingleton<IOutboxTransport, InMemoryTransport>();
+builder.Services.AddRabbitMQTransport(
+    hostName: "127.0.0.1",
+    port: 5672);
 builder.Services.AddHostedService<OutboxProcessor>();
 
 var app = builder.Build();

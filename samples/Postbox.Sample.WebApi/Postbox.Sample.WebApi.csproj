@@ -19,6 +19,7 @@
     <ProjectReference Include="..\..\src\Postbox.EFCore\Postbox.EFCore.csproj" />
     <ProjectReference Include="..\..\src\Postbox.PostgreSQL\Postbox.PostgreSQL.csproj" />
     <ProjectReference Include="..\..\src\Postbox.Transport.InMemory\Postbox.Transport.InMemory.csproj" />
+	<ProjectReference Include="..\..\src\Postbox.Transport.RabbitMQ\Postbox.Transport.RabbitMQ.csproj" />
   </ItemGroup>
 
 </Project>

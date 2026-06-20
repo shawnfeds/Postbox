@@ -12,7 +12,6 @@ public sealed class OutboxProcessor(
     IOutboxTransport transport,
     ILogger<OutboxProcessor> logger) : BackgroundService
 {
-    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan BusyInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(30);
 
@@ -60,13 +59,9 @@ public sealed class OutboxProcessor(
             {
                 await transport.SendAsync(message, cancellationToken);
 
-                await db.Database.ExecuteSqlAsync(
-                    $"""
-                    UPDATE "OutboxMessages"
-                    SET "ProcessedOnUtc" = {DateTime.UtcNow}
-                    WHERE "Id" = {message.Id}
-                    """,
-                    cancellationToken);
+                await db.Database.ExecuteSqlRawAsync(
+                    schemaProvider.GetMarkProcessedSql(),
+                    message.Id);
 
                 logger.LogInformation(
                     "Outbox message {Id} of type {Type} processed successfully",
@@ -79,13 +74,8 @@ public sealed class OutboxProcessor(
                      message.Id, message.Type);
 
                 await db.Database.ExecuteSqlRawAsync(
-                    """
-                    UPDATE "OutboxMessages"
-                    SET "Error" = @p0,
-                    "RetryCount" = "RetryCount" + 1
-                    WHERE "Id" = @p1
-                    """,
-                    ex.Message, message.Id);
+     schemaProvider.GetMarkFailedSql(),
+     ex.Message, message.Id);
             }
         }
 
