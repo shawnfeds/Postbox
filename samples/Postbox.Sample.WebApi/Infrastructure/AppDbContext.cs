@@ -23,5 +23,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasKey(o => o.Id);
             b.ToTable("OutboxMessages", "postbox");
         });
+
+        modelBuilder.Entity<OutboxDeadLetter>(b =>
+        {
+            b.HasKey(o => o.Id);
+            b.ToTable("OutboxDeadLetters", "postbox");
+        });
     }
 }

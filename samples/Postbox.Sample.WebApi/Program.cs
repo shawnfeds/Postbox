@@ -1,11 +1,13 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.Options;
 using Postbox.Core;
 using Postbox.EFCore;
 using Postbox.PostgreSQL;
 using Postbox.Sample.WebApi.Domain;
 using Postbox.Sample.WebApi.Infrastructure;
-using Postbox.Transport.RabbitMQ;
 using Postbox.SqlServer;
+using Postbox.Transport.RabbitMQ;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,7 +15,10 @@ var builder = WebApplication.CreateBuilder(args);
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
-builder.Services.AddSingleton<OutboxInterceptor>();
+builder.Services.AddSingleton<OutboxInterceptor>(sp =>
+    new OutboxInterceptor(
+        TimeProvider.System,
+        sp.GetRequiredService<IOptions<OutboxOptions>>()));
 
 var dbProvider = builder.Configuration["DbProvider"]; // "Postgres" or "SqlServer"
 
@@ -21,7 +26,10 @@ if (dbProvider == "SqlServer")
 {
     builder.Services.AddDbContext<AppDbContext>((sp, options) =>
         options
-            .UseSqlServer(builder.Configuration.GetConnectionString("PostboxSqlServer"))
+            .UseSqlServer(builder.Configuration.GetConnectionString("PostboxSqlServer"),
+                b => b.MigrationsAssembly("Postbox.Sample.WebApi")
+                      .MigrationsHistoryTable("__EFMigrationsHistory", "postbox"))
+            .ReplaceService<IMigrationsAssembly, SqlServerMigrationsAssembly>()
             .AddInterceptors(sp.GetRequiredService<OutboxInterceptor>()));
     builder.Services.AddSingleton<IOutboxSchemaProvider, SqlServerSchemaProvider>();
 }
@@ -29,7 +37,10 @@ else
 {
     builder.Services.AddDbContext<AppDbContext>((sp, options) =>
         options
-            .UseNpgsql(builder.Configuration.GetConnectionString("Postbox"))
+            .UseNpgsql(builder.Configuration.GetConnectionString("Postbox"),
+                b => b.MigrationsAssembly("Postbox.Sample.WebApi")
+                      .MigrationsHistoryTable("__EFMigrationsHistory", "postbox"))
+            .ReplaceService<IMigrationsAssembly, PostgresMigrationsAssembly>()
             .AddInterceptors(sp.GetRequiredService<OutboxInterceptor>()));
     builder.Services.AddSingleton<IOutboxSchemaProvider, PostgreSqlSchemaProvider>();
 }
@@ -38,6 +49,7 @@ builder.Services.AddScoped<DbContext>(sp => sp.GetRequiredService<AppDbContext>(
 builder.Services.AddRabbitMQTransport(
     hostName: "127.0.0.1",
     port: 6572);
+builder.Services.AddOptions<OutboxOptions>();
 builder.Services.AddHostedService<OutboxProcessor>();
 
 var app = builder.Build();

@@ -23,6 +23,18 @@ public sealed class SqlServerSchemaProvider : IOutboxSchemaProvider
                 ON [postbox].[OutboxMessages] ([ProcessedOnUtc])
                 WHERE [ProcessedOnUtc] IS NULL;
         END
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'OutboxDeadLetters' AND schema_id = SCHEMA_ID('postbox'))
+        BEGIN
+            CREATE TABLE [postbox].[OutboxDeadLetters] (
+                [Id]             UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+                [Type]           NVARCHAR(500)    NOT NULL,
+                [Payload]        NVARCHAR(MAX)    NOT NULL,
+                [OccurredOnUtc]  DATETIME2        NOT NULL,
+                [AbandonedOnUtc] DATETIME2        NOT NULL,
+                [LastError]      NVARCHAR(MAX)    NULL,
+                [RetryCount]     INT              NOT NULL
+            );
+        END
         """;
 
     public string GetPendingMessagesSql() => """
@@ -43,5 +55,14 @@ public sealed class SqlServerSchemaProvider : IOutboxSchemaProvider
         SET [Error] = @p0,
             [RetryCount] = [RetryCount] + 1
         WHERE [Id] = @p1
+        """;
+
+    public string GetDeadLetterSql() => """
+        INSERT INTO [postbox].[OutboxDeadLetters]
+            ([Id], [Type], [Payload], [OccurredOnUtc], [AbandonedOnUtc], [LastError], [RetryCount])
+        SELECT [Id], [Type], [Payload], [OccurredOnUtc], GETUTCDATE(), @p0, [RetryCount]
+        FROM [postbox].[OutboxMessages]
+        WHERE [Id] = @p1;
+        DELETE FROM [postbox].[OutboxMessages] WHERE [Id] = @p1;
         """;
 }

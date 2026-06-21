@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.Options;
 using Postbox.EFCore;
 using Postbox.Sample.WebApi.Infrastructure;
 using Testcontainers.PostgreSql;
@@ -21,7 +22,7 @@ public class PostgresFixture : IAsyncLifetime
                 b => b.MigrationsAssembly("Postbox.Sample.WebApi")
                       .MigrationsHistoryTable("__EFMigrationsHistory", "postbox"))
             .ReplaceService<IMigrationsAssembly, PostgresMigrationsAssembly>()
-            .AddInterceptors(new OutboxInterceptor())
+            .AddInterceptors(new OutboxInterceptor(TimeProvider.System, Options.Create(new OutboxOptions())))
             .Options;
 
         return new AppDbContext(options);
@@ -41,6 +42,7 @@ public class PostgresFixture : IAsyncLifetime
         await using var db = CreateDbContext();
         await db.Database.ExecuteSqlRawAsync(
             """
+        DELETE FROM postbox."OutboxDeadLetters";
         DELETE FROM postbox."OutboxMessages";
         DELETE FROM postbox."Orders";
         """);

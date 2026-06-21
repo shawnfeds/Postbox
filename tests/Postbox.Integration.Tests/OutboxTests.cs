@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Postbox.Core;
 using Postbox.EFCore;
 using Postbox.PostgreSQL;
@@ -49,7 +50,8 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
             null!,
             _schema,
             transport,
-            NullLogger<OutboxProcessor>.Instance);
+            NullLogger<OutboxProcessor>.Instance,
+            Options.Create(new OutboxOptions()));
 
         // Act
         await processor.ProcessOnceAsync(db, CancellationToken.None);
@@ -79,7 +81,8 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
             null!,
             _schema,
             transport,
-            NullLogger<OutboxProcessor>.Instance);
+            NullLogger<OutboxProcessor>.Instance,
+            Options.Create(new OutboxOptions()));
 
         await processor.ProcessOnceAsync(db, CancellationToken.None);
 
@@ -116,7 +119,8 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
                 null!,
                 _schema,
                 transport,
-                NullLogger<OutboxProcessor>.Instance);
+                NullLogger<OutboxProcessor>.Instance,
+                Options.Create(new OutboxOptions()));
             await processor.ProcessOnceAsync(db, CancellationToken.None);
         });
 
@@ -149,7 +153,8 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
             null!,
             _schema,
             transport,
-            NullLogger<OutboxProcessor>.Instance);
+            NullLogger<OutboxProcessor>.Instance,
+            Options.Create(new OutboxOptions()));
 
         await processor.ProcessOnceAsync(db, CancellationToken.None);
 
@@ -189,7 +194,8 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
                 null!,
                 _schema,
                 transport,
-                NullLogger<OutboxProcessor>.Instance);
+                NullLogger<OutboxProcessor>.Instance,
+                Options.Create(new OutboxOptions()));
 
             var processed = await processor.ProcessOnceAsync(db, CancellationToken.None);
             totalProcessed += processed;
@@ -199,5 +205,38 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
         // Assert
         Assert.Equal(35, totalProcessed);
         Assert.Equal(35, transport.Messages.Count);
+    }
+
+    [Fact]
+    public async Task Processor_MessageExceedsMaxRetryCount_MovesToDeadLetter()
+    {
+        await fixture.ResetAsync();
+        await using var setupDb = fixture.CreateDbContext();
+        var order = Order.Create("deadletter@example.com", 50m);
+        setupDb.Orders.Add(order);
+        await setupDb.SaveChangesAsync();
+
+        var transport = new FailingTransport();
+        var opts = Options.Create(new OutboxOptions { MaxRetryCount = 3 });
+
+        // run processor MaxRetryCount times to exhaust retries
+        for (int i = 0; i < opts.Value.MaxRetryCount; i++)
+        {
+            await using var db = fixture.CreateDbContext();
+            var processor = new OutboxProcessor(null!, _schema, transport, NullLogger<OutboxProcessor>.Instance, opts);
+            await processor.ProcessOnceAsync(db, CancellationToken.None);
+        }
+
+        await using var freshDb = fixture.CreateDbContext();
+
+        var deadLetters = await freshDb.Set<OutboxDeadLetter>().ToListAsync();
+        Assert.Single(deadLetters);
+        Assert.NotNull(deadLetters[0].LastError);
+        Assert.Equal(3, deadLetters[0].RetryCount);
+
+        var pending = await freshDb.Set<OutboxMessage>()
+            .Where(m => m.ProcessedOnUtc == null)
+            .ToListAsync();
+        Assert.Empty(pending);
     }
 }

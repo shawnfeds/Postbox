@@ -18,6 +18,24 @@ public sealed class PostgreSqlSchemaProvider : IOutboxSchemaProvider
         CREATE INDEX IF NOT EXISTS "IX_OutboxMessages_Unprocessed"
             ON postbox."OutboxMessages" ("ProcessedOnUtc")
             WHERE "ProcessedOnUtc" IS NULL;
+        CREATE TABLE IF NOT EXISTS postbox."OutboxDeadLetters" (
+            "Id"             UUID          NOT NULL PRIMARY KEY,
+            "Type"           VARCHAR(500)  NOT NULL,
+            "Payload"        TEXT          NOT NULL,
+            "OccurredOnUtc"  TIMESTAMPTZ   NOT NULL,
+            "AbandonedOnUtc" TIMESTAMPTZ   NOT NULL,
+            "LastError"      TEXT          NULL,
+            "RetryCount"     INT           NOT NULL
+        );
+        """;
+
+    public string GetDeadLetterSql() => """
+        INSERT INTO postbox."OutboxDeadLetters"
+            ("Id", "Type", "Payload", "OccurredOnUtc", "AbandonedOnUtc", "LastError", "RetryCount")
+        SELECT "Id", "Type", "Payload", "OccurredOnUtc", NOW(), @p0, "RetryCount" + 1
+        FROM postbox."OutboxMessages"
+        WHERE "Id" = @p1;
+        DELETE FROM postbox."OutboxMessages" WHERE "Id" = @p1;
         """;
 
     public string GetPendingMessagesSql() => """

@@ -6,4 +6,5 @@ public interface IOutboxSchemaProvider
     string GetMarkProcessedSql();
     string GetMarkFailedSql();
     string GetCreateSchemaSql();
+    string GetDeadLetterSql();
 }
