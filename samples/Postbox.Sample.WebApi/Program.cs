@@ -37,7 +37,7 @@ else
 builder.Services.AddScoped<DbContext>(sp => sp.GetRequiredService<AppDbContext>());
 builder.Services.AddRabbitMQTransport(
     hostName: "127.0.0.1",
-    port: 5672);
+    port: 6572);
 builder.Services.AddHostedService<OutboxProcessor>();
 
 var app = builder.Build();

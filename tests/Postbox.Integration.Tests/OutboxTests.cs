@@ -91,4 +91,113 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
         Assert.Equal(1, message.RetryCount);
         Assert.NotNull(message.Error);
     }
+
+    [Fact]
+    public async Task Processor_TwoConcurrentProcessors_EachMessageProcessedOnlyOnce()
+    {
+        await fixture.ResetAsync();
+
+        // Arrange — write 20 orders
+        await using var setupDb = fixture.CreateDbContext();
+        for (int i = 0; i < 20; i++)
+        {
+            var order = Order.Create($"concurrent{i}@example.com", 10m * i);
+            setupDb.Orders.Add(order);
+        }
+        await setupDb.SaveChangesAsync();
+
+        var transport = new CapturingTransport();
+
+        // Act — two processors running simultaneously
+        var tasks = Enumerable.Range(0, 2).Select(async _ =>
+        {
+            await using var db = fixture.CreateDbContext();
+            var processor = new OutboxProcessor(
+                null!,
+                _schema,
+                transport,
+                NullLogger<OutboxProcessor>.Instance);
+            await processor.ProcessOnceAsync(db, CancellationToken.None);
+        });
+
+        await Task.WhenAll(tasks);
+
+        // Assert — 20 messages total, none duplicated
+        Assert.Equal(20, transport.Messages.Count);
+
+        var ids = transport.Messages.Select(m => m.Id).ToList();
+        Assert.Equal(ids.Count, ids.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task Processor_CrashMidBatch_MessagesRemainPendingForRetry()
+    {
+        await fixture.ResetAsync();
+
+        await using var setupDb = fixture.CreateDbContext();
+        for (int i = 0; i < 5; i++)
+        {
+            var order = Order.Create($"crash{i}@example.com", 10m);
+            setupDb.Orders.Add(order);
+        }
+        await setupDb.SaveChangesAsync();
+
+        // Transport fails on every message — simulates crash mid-flight
+        var transport = new FailingTransport();
+        await using var db = fixture.CreateDbContext();
+        var processor = new OutboxProcessor(
+            null!,
+            _schema,
+            transport,
+            NullLogger<OutboxProcessor>.Instance);
+
+        await processor.ProcessOnceAsync(db, CancellationToken.None);
+
+        // All messages still pending, all have RetryCount = 1
+        await using var freshDb = fixture.CreateDbContext();
+        var messages = await freshDb.Set<OutboxMessage>()
+            .Where(m => m.ProcessedOnUtc == null)
+            .ToListAsync();
+
+        Assert.Equal(5, messages.Count);
+        Assert.All(messages, m => Assert.Equal(1, m.RetryCount));
+        Assert.All(messages, m => Assert.NotNull(m.Error));
+    }
+
+    [Fact]
+    public async Task Processor_LargeBacklog_DrainsCompletelyAcrossMultipleRuns()
+    {
+        await fixture.ResetAsync();
+
+        // Arrange — 35 messages (processor batch size is 10, needs 4 runs)
+        await using var setupDb = fixture.CreateDbContext();
+        for (int i = 0; i < 35; i++)
+        {
+            var order = Order.Create($"backlog{i}@example.com", 10m);
+            setupDb.Orders.Add(order);
+        }
+        await setupDb.SaveChangesAsync();
+
+        var transport = new CapturingTransport();
+
+        // Act — run processor until no messages remain
+        int totalProcessed = 0;
+        for (int run = 0; run < 10; run++) // cap at 10 runs to avoid infinite loop
+        {
+            await using var db = fixture.CreateDbContext();
+            var processor = new OutboxProcessor(
+                null!,
+                _schema,
+                transport,
+                NullLogger<OutboxProcessor>.Instance);
+
+            var processed = await processor.ProcessOnceAsync(db, CancellationToken.None);
+            totalProcessed += processed;
+            if (processed == 0) break;
+        }
+
+        // Assert
+        Assert.Equal(35, totalProcessed);
+        Assert.Equal(35, transport.Messages.Count);
+    }
 }

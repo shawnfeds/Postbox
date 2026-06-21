@@ -1,4 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Postbox.EFCore;
 using Postbox.Sample.WebApi.Infrastructure;
 using Testcontainers.PostgreSql;
 
@@ -15,8 +17,11 @@ public class PostgresFixture : IAsyncLifetime
     public AppDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_container.GetConnectionString())
-            .AddInterceptors(new Postbox.EFCore.OutboxInterceptor())
+            .UseNpgsql(_container.GetConnectionString(),
+                b => b.MigrationsAssembly("Postbox.Sample.WebApi")
+                      .MigrationsHistoryTable("__EFMigrationsHistory", "postbox"))
+            .ReplaceService<IMigrationsAssembly, PostgresMigrationsAssembly>()
+            .AddInterceptors(new OutboxInterceptor())
             .Options;
 
         return new AppDbContext(options);
@@ -27,15 +32,8 @@ public class PostgresFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
-
-        // Run migrations against the test container
         await using var db = CreateDbContext();
         await db.Database.MigrateAsync();
-    }
-
-    public async Task DisposeAsync()
-    {
-        await _container.StopAsync();
     }
 
     public async Task ResetAsync()
@@ -43,8 +41,13 @@ public class PostgresFixture : IAsyncLifetime
         await using var db = CreateDbContext();
         await db.Database.ExecuteSqlRawAsync(
             """
-        DELETE FROM "OutboxMessages";
-        DELETE FROM "Orders";
+        DELETE FROM postbox."OutboxMessages";
+        DELETE FROM postbox."Orders";
         """);
+    }
+
+    public async Task DisposeAsync()
+    {
+        await _container.StopAsync();
     }
 }
