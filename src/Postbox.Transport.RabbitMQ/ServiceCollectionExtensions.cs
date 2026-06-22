@@ -23,7 +23,8 @@ public static class ServiceCollectionExtensions
                 HostName = hostName,
                 Port = port,
                 UserName = userName,
-                Password = password
+                Password = password,
+                AutomaticRecoveryEnabled = true
             };
             return factory.CreateConnectionAsync().GetAwaiter().GetResult();
         });
