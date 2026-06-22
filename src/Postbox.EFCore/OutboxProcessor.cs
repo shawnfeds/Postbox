@@ -25,8 +25,7 @@ public sealed class OutboxProcessor(
             try
             {
                 await using var scope = scopeFactory.CreateAsyncScope();
-                var db = scope.ServiceProvider.GetRequiredService<DbContext>();
-                var processed = await ProcessOnceAsync(db, stoppingToken);
+                var processed = await ProcessOnceAsync(stoppingToken);
                 interval = processed > 0 ? BusyInterval : IdleInterval;
             }
             catch (Exception ex)
@@ -38,19 +37,95 @@ public sealed class OutboxProcessor(
         }
     }
 
-    public async Task<int> ProcessOnceAsync(DbContext db, CancellationToken cancellationToken)
+    public async Task<int> ProcessOnceAsync(CancellationToken cancellationToken)
     {
-        await using var transaction = await db.Database
-            .BeginTransactionAsync(cancellationToken);
+        List<OutboxMessage> messages;
 
-        var messages = await db.Set<OutboxMessage>()
-            .FromSqlRaw(schemaProvider.GetPendingMessagesSql())
-            .ToListAsync(cancellationToken);
-
-        if (messages.Count == 0)
+        await using (var fetchScope = scopeFactory.CreateAsyncScope())
         {
-            await transaction.RollbackAsync(cancellationToken);
-            return 0;
+            var db = fetchScope.ServiceProvider.GetRequiredService<DbContext>();
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+            messages = await db.Set<OutboxMessage>()
+                .FromSqlRaw(schemaProvider.GetPendingMessagesSql())
+                .ToListAsync(cancellationToken);
+
+            if (messages.Count == 0)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return 0;
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        await Parallel.ForEachAsync(
+            messages,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = options.Value.MaxDegreeOfParallelism,
+                CancellationToken = cancellationToken
+            },
+            async (message, ct) =>
+            {
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<DbContext>();
+
+                try
+                {
+                    await transport.SendAsync(message, ct);
+                    await db.Database.ExecuteSqlRawAsync(
+                        schemaProvider.GetMarkProcessedSql(),
+                        message.Id);
+                    logger.LogInformation(
+                        "Outbox message {Id} of type {Type} processed successfully",
+                        message.Id, message.Type);
+                }
+                catch (Exception ex)
+                {
+                    var nextRetryCount = message.RetryCount + 1;
+
+                    if (nextRetryCount >= options.Value.MaxRetryCount)
+                    {
+                        await db.Database.ExecuteSqlRawAsync(
+                            schemaProvider.GetDeadLetterSql(),
+                            ex.Message, message.Id);
+                        logger.LogWarning(
+                            "Outbox message {Id} of type {Type} moved to dead letter after {RetryCount} retries",
+                            message.Id, message.Type, nextRetryCount);
+                    }
+                    else
+                    {
+                        await db.Database.ExecuteSqlRawAsync(
+                            schemaProvider.GetMarkFailedSql(),
+                            ex.Message, message.Id);
+                        logger.LogError(ex,
+                            "Failed to process outbox message {Id} of type {Type}, retry {RetryCount} of {MaxRetryCount}",
+                            message.Id, message.Type, nextRetryCount, options.Value.MaxRetryCount);
+                    }
+                }
+            });
+
+        return messages.Count;
+    }
+
+    internal async Task<int> ProcessOnceAsync(DbContext db, CancellationToken cancellationToken)
+    {
+        List<OutboxMessage> messages;
+
+        await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
+        {
+            messages = await db.Set<OutboxMessage>()
+                .FromSqlRaw(schemaProvider.GetPendingMessagesSql())
+                .ToListAsync(cancellationToken);
+
+            if (messages.Count == 0)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return 0;
+            }
+
+            await transaction.CommitAsync(cancellationToken);
         }
 
         foreach (var message in messages)
@@ -90,7 +165,6 @@ public sealed class OutboxProcessor(
             }
         }
 
-        await transaction.CommitAsync(cancellationToken);
         return messages.Count;
     }
 }

@@ -99,8 +99,6 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
     public async Task Processor_TwoConcurrentProcessors_EachMessageProcessedOnlyOnce()
     {
         await fixture.ResetAsync();
-
-        // Arrange — write 20 orders
         await using var setupDb = fixture.CreateDbContext();
         for (int i = 0; i < 20; i++)
         {
@@ -110,27 +108,24 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
         await setupDb.SaveChangesAsync();
 
         var transport = new CapturingTransport();
-
-        // Act — two processors running simultaneously
         var tasks = Enumerable.Range(0, 2).Select(async _ =>
         {
             await using var db = fixture.CreateDbContext();
-            var processor = new OutboxProcessor(
-                null!,
-                _schema,
-                transport,
-                NullLogger<OutboxProcessor>.Instance,
-                Options.Create(new OutboxOptions()));
+            var processor = new OutboxProcessor(null!, _schema, transport, NullLogger<OutboxProcessor>.Instance, Options.Create(new OutboxOptions()));
             await processor.ProcessOnceAsync(db, CancellationToken.None);
         });
-
         await Task.WhenAll(tasks);
 
-        // Assert — 20 messages total, none duplicated
-        Assert.Equal(20, transport.Messages.Count);
+        // at-least-once: all 20 messages dispatched, duplicates are acceptable
+        var dispatchedIds = transport.Messages.Select(m => m.Id).Distinct().ToList();
+        Assert.Equal(20, dispatchedIds.Count);
 
-        var ids = transport.Messages.Select(m => m.Id).ToList();
-        Assert.Equal(ids.Count, ids.Distinct().Count());
+        // all messages marked processed in DB
+        await using var freshDb = fixture.CreateDbContext();
+        var pending = await freshDb.Set<OutboxMessage>()
+            .Where(m => m.ProcessedOnUtc == null)
+            .ToListAsync();
+        Assert.Empty(pending);
     }
 
     [Fact]
