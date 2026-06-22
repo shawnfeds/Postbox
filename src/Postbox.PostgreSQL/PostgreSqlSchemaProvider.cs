@@ -13,7 +13,8 @@ public sealed class PostgreSqlSchemaProvider : IOutboxSchemaProvider
             "OccurredOnUtc"  TIMESTAMPTZ   NOT NULL,
             "ProcessedOnUtc" TIMESTAMPTZ   NULL,
             "Error"          TEXT          NULL,
-            "RetryCount"     INT           NOT NULL DEFAULT 0
+            "RetryCount"     INT           NOT NULL DEFAULT 0,
+            "LockedUntil"    TIMESTAMPTZ   NULL
         );
         CREATE INDEX IF NOT EXISTS "IX_OutboxMessages_Unprocessed"
             ON postbox."OutboxMessages" ("ProcessedOnUtc")
@@ -29,6 +30,35 @@ public sealed class PostgreSqlSchemaProvider : IOutboxSchemaProvider
         );
         """;
 
+    public string GetClaimMessagesSql(int batchSize, int lockDurationSeconds) => $"""
+        UPDATE postbox."OutboxMessages"
+        SET "LockedUntil" = NOW() + interval '{lockDurationSeconds} seconds'
+        WHERE "Id" IN (
+            SELECT "Id" FROM postbox."OutboxMessages"
+            WHERE "ProcessedOnUtc" IS NULL
+            AND ("LockedUntil" IS NULL OR "LockedUntil" < NOW())
+            ORDER BY "OccurredOnUtc"
+            LIMIT {batchSize}
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING "Id", "Type", "Payload", "OccurredOnUtc", "ProcessedOnUtc", "Error", "RetryCount", "LockedUntil";
+        """;
+
+    public string GetMarkProcessedSql() => """
+        UPDATE postbox."OutboxMessages"
+        SET "ProcessedOnUtc" = NOW(),
+            "LockedUntil" = NULL
+        WHERE "Id" = @p0
+        """;
+
+    public string GetMarkFailedSql() => """
+        UPDATE postbox."OutboxMessages"
+        SET "Error" = @p0,
+            "RetryCount" = "RetryCount" + 1,
+            "LockedUntil" = NULL
+        WHERE "Id" = @p1
+        """;
+
     public string GetDeadLetterSql() => """
         INSERT INTO postbox."OutboxDeadLetters"
             ("Id", "Type", "Payload", "OccurredOnUtc", "AbandonedOnUtc", "LastError", "RetryCount")
@@ -36,27 +66,5 @@ public sealed class PostgreSqlSchemaProvider : IOutboxSchemaProvider
         FROM postbox."OutboxMessages"
         WHERE "Id" = @p1;
         DELETE FROM postbox."OutboxMessages" WHERE "Id" = @p1;
-        """;
-
-    public string GetPendingMessagesSql() => """
-        SELECT "Id", "Type", "Payload", "OccurredOnUtc", "RetryCount", "Error", "ProcessedOnUtc"
-        FROM postbox."OutboxMessages"
-        WHERE "ProcessedOnUtc" IS NULL
-        ORDER BY "OccurredOnUtc"
-        LIMIT 10
-        FOR UPDATE SKIP LOCKED;
-        """;
-
-    public string GetMarkProcessedSql() => """
-        UPDATE postbox."OutboxMessages"
-        SET "ProcessedOnUtc" = NOW()
-        WHERE "Id" = @p0
-        """;
-
-    public string GetMarkFailedSql() => """
-        UPDATE postbox."OutboxMessages"
-        SET "Error" = @p0,
-            "RetryCount" = "RetryCount" + 1
-        WHERE "Id" = @p1
         """;
 }

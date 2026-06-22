@@ -2,7 +2,7 @@
 
 public interface IOutboxSchemaProvider
 {
-    string GetPendingMessagesSql();
+    string GetClaimMessagesSql(int batchSize, int lockDurationSeconds);
     string GetMarkProcessedSql();
     string GetMarkFailedSql();
     string GetCreateSchemaSql();

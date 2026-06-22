@@ -116,11 +116,9 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
         });
         await Task.WhenAll(tasks);
 
-        // at-least-once: all 20 messages dispatched, duplicates are acceptable
         var dispatchedIds = transport.Messages.Select(m => m.Id).Distinct().ToList();
         Assert.Equal(20, dispatchedIds.Count);
 
-        // all messages marked processed in DB
         await using var freshDb = fixture.CreateDbContext();
         var pending = await freshDb.Set<OutboxMessage>()
             .Where(m => m.ProcessedOnUtc == null)

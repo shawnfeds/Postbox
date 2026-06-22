@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using Postbox.Core;
 
@@ -13,6 +14,8 @@ public static class ServiceCollectionExtensions
         string userName = "guest",
         string password = "guest")
     {
+        services.AddOptions<RabbitMQTransportOptions>();
+
         services.AddSingleton<IConnection>(sp =>
         {
             var factory = new ConnectionFactory
@@ -28,7 +31,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IOutboxTransport>(sp =>
         {
             var connection = sp.GetRequiredService<IConnection>();
-            return RabbitMQTransport.CreateAsync(connection).GetAwaiter().GetResult();
+            var options = sp.GetRequiredService<IOptions<RabbitMQTransportOptions>>();
+            return RabbitMQTransport.CreateAsync(connection, options).GetAwaiter().GetResult();
         });
 
         return services;
