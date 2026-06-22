@@ -51,7 +51,8 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
             _schema,
             transport,
             NullLogger<OutboxProcessor>.Instance,
-            Options.Create(new OutboxOptions()));
+            Options.Create(new OutboxOptions()),
+            NullMeterFactory.Instance);
 
         // Act
         await processor.ProcessOnceAsync(db, CancellationToken.None);
@@ -82,7 +83,8 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
             _schema,
             transport,
             NullLogger<OutboxProcessor>.Instance,
-            Options.Create(new OutboxOptions()));
+            Options.Create(new OutboxOptions()),
+            NullMeterFactory.Instance);
 
         await processor.ProcessOnceAsync(db, CancellationToken.None);
 
@@ -111,7 +113,13 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
         var tasks = Enumerable.Range(0, 2).Select(async _ =>
         {
             await using var db = fixture.CreateDbContext();
-            var processor = new OutboxProcessor(null!, _schema, transport, NullLogger<OutboxProcessor>.Instance, Options.Create(new OutboxOptions()));
+            var processor = new OutboxProcessor(
+                null!,
+                _schema,
+                transport,
+                NullLogger<OutboxProcessor>.Instance,
+                Options.Create(new OutboxOptions()),
+                NullMeterFactory.Instance);
             await processor.ProcessOnceAsync(db, CancellationToken.None);
         });
         await Task.WhenAll(tasks);
@@ -147,7 +155,8 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
             _schema,
             transport,
             NullLogger<OutboxProcessor>.Instance,
-            Options.Create(new OutboxOptions()));
+            Options.Create(new OutboxOptions()),
+            NullMeterFactory.Instance);
 
         await processor.ProcessOnceAsync(db, CancellationToken.None);
 
@@ -188,7 +197,8 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
                 _schema,
                 transport,
                 NullLogger<OutboxProcessor>.Instance,
-                Options.Create(new OutboxOptions()));
+                Options.Create(new OutboxOptions()),
+                NullMeterFactory.Instance);
 
             var processed = await processor.ProcessOnceAsync(db, CancellationToken.None);
             totalProcessed += processed;
@@ -216,7 +226,13 @@ public class OutboxTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
         for (int i = 0; i < opts.Value.MaxRetryCount; i++)
         {
             await using var db = fixture.CreateDbContext();
-            var processor = new OutboxProcessor(null!, _schema, transport, NullLogger<OutboxProcessor>.Instance, opts);
+            var processor = new OutboxProcessor(
+                null!,
+                _schema,
+                transport,
+                NullLogger<OutboxProcessor>.Instance,
+                opts,  // <-- was Options.Create(new OutboxOptions())
+                NullMeterFactory.Instance);
             await processor.ProcessOnceAsync(db, CancellationToken.None);
         }
 

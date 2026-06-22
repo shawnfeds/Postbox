@@ -4,18 +4,42 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Postbox.Core;
+using Postbox.EFCore;
+using System.Diagnostics.Metrics;
 
-namespace Postbox.EFCore;
-
-public sealed class OutboxProcessor(
-    IServiceScopeFactory scopeFactory,
-    IOutboxSchemaProvider schemaProvider,
-    IOutboxTransport transport,
-    ILogger<OutboxProcessor> logger,
-    IOptions<OutboxOptions> options) : BackgroundService
+public sealed class OutboxProcessor : BackgroundService
 {
     private static readonly TimeSpan BusyInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(30);
+
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IOutboxSchemaProvider _schemaProvider;
+    private readonly IOutboxTransport _transport;
+    private readonly ILogger<OutboxProcessor> _logger;
+    private readonly IOptions<OutboxOptions> _options;
+    private readonly Counter<long> _processedCounter;
+    private readonly Counter<long> _failedCounter;
+    private readonly Counter<long> _deadLetteredCounter;
+
+    public OutboxProcessor(
+        IServiceScopeFactory scopeFactory,
+        IOutboxSchemaProvider schemaProvider,
+        IOutboxTransport transport,
+        ILogger<OutboxProcessor> logger,
+        IOptions<OutboxOptions> options,
+        IMeterFactory meterFactory)
+    {
+        _scopeFactory = scopeFactory;
+        _schemaProvider = schemaProvider;
+        _transport = transport;
+        _logger = logger;
+        _options = options;
+
+        var meter = meterFactory.Create("Postbox.EFCore");
+        _processedCounter = meter.CreateCounter<long>("postbox.messages.processed");
+        _failedCounter = meter.CreateCounter<long>("postbox.messages.failed");
+        _deadLetteredCounter = meter.CreateCounter<long>("postbox.messages.deadlettered");
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -29,7 +53,7 @@ public sealed class OutboxProcessor(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Outbox processor encountered an error");
+                _logger.LogError(ex, "Outbox processor encountered an error");
                 interval = IdleInterval;
             }
             await Task.Delay(interval, stoppingToken);
@@ -38,13 +62,13 @@ public sealed class OutboxProcessor(
 
     public async Task<int> ProcessOnceAsync(CancellationToken cancellationToken)
     {
-        await using var fetchScope = scopeFactory.CreateAsyncScope();
+        await using var fetchScope = _scopeFactory.CreateAsyncScope();
         var db = fetchScope.ServiceProvider.GetRequiredService<DbContext>();
 
         var messages = await db.Set<OutboxMessage>()
-            .FromSqlRaw(schemaProvider.GetClaimMessagesSql(
-                options.Value.BatchSize,
-                options.Value.LockDurationSeconds))
+            .FromSqlRaw(_schemaProvider.GetClaimMessagesSql(
+                _options.Value.BatchSize,
+                _options.Value.LockDurationSeconds))
             .ToListAsync(cancellationToken);
 
         if (messages.Count == 0)
@@ -54,21 +78,22 @@ public sealed class OutboxProcessor(
             messages,
             new ParallelOptions
             {
-                MaxDegreeOfParallelism = options.Value.MaxDegreeOfParallelism,
+                MaxDegreeOfParallelism = _options.Value.MaxDegreeOfParallelism,
                 CancellationToken = cancellationToken
             },
             async (message, ct) =>
             {
-                await using var scope = scopeFactory.CreateAsyncScope();
+                await using var scope = _scopeFactory.CreateAsyncScope();
                 var msgDb = scope.ServiceProvider.GetRequiredService<DbContext>();
 
                 try
                 {
-                    await transport.SendAsync(message, ct);
+                    await _transport.SendAsync(message, ct);
                     await msgDb.Database.ExecuteSqlRawAsync(
-                        schemaProvider.GetMarkProcessedSql(),
+                        _schemaProvider.GetMarkProcessedSql(),
                         message.Id);
-                    logger.LogInformation(
+                    _processedCounter.Add(1, new KeyValuePair<string, object?>("message.type", message.Type));
+                    _logger.LogInformation(
                         "Outbox message {Id} of type {Type} processed successfully",
                         message.Id, message.Type);
                 }
@@ -76,23 +101,25 @@ public sealed class OutboxProcessor(
                 {
                     var nextRetryCount = message.RetryCount + 1;
 
-                    if (nextRetryCount >= options.Value.MaxRetryCount)
+                    if (nextRetryCount >= _options.Value.MaxRetryCount)
                     {
                         await msgDb.Database.ExecuteSqlRawAsync(
-                            schemaProvider.GetDeadLetterSql(),
+                            _schemaProvider.GetDeadLetterSql(),
                             ex.Message, message.Id);
-                        logger.LogWarning(
+                        _deadLetteredCounter.Add(1, new KeyValuePair<string, object?>("message.type", message.Type));
+                        _logger.LogWarning(
                             "Outbox message {Id} of type {Type} moved to dead letter after {RetryCount} retries",
                             message.Id, message.Type, nextRetryCount);
                     }
                     else
                     {
                         await msgDb.Database.ExecuteSqlRawAsync(
-                            schemaProvider.GetMarkFailedSql(),
+                            _schemaProvider.GetMarkFailedSql(),
                             ex.Message, message.Id);
-                        logger.LogError(ex,
+                        _failedCounter.Add(1, new KeyValuePair<string, object?>("message.type", message.Type));
+                        _logger.LogError(ex,
                             "Failed to process outbox message {Id} of type {Type}, retry {RetryCount} of {MaxRetryCount}",
-                            message.Id, message.Type, nextRetryCount, options.Value.MaxRetryCount);
+                            message.Id, message.Type, nextRetryCount, _options.Value.MaxRetryCount);
                     }
                 }
             });
@@ -103,9 +130,9 @@ public sealed class OutboxProcessor(
     internal async Task<int> ProcessOnceAsync(DbContext db, CancellationToken cancellationToken)
     {
         var messages = await db.Set<OutboxMessage>()
-            .FromSqlRaw(schemaProvider.GetClaimMessagesSql(
-                options.Value.BatchSize,
-                options.Value.LockDurationSeconds))
+            .FromSqlRaw(_schemaProvider.GetClaimMessagesSql(
+                _options.Value.BatchSize,
+                _options.Value.LockDurationSeconds))
             .ToListAsync(cancellationToken);
 
         if (messages.Count == 0)
@@ -115,11 +142,12 @@ public sealed class OutboxProcessor(
         {
             try
             {
-                await transport.SendAsync(message, cancellationToken);
+                await _transport.SendAsync(message, cancellationToken);
                 await db.Database.ExecuteSqlRawAsync(
-                    schemaProvider.GetMarkProcessedSql(),
+                    _schemaProvider.GetMarkProcessedSql(),
                     message.Id);
-                logger.LogInformation(
+                _processedCounter.Add(1, new KeyValuePair<string, object?>("message.type", message.Type));
+                _logger.LogInformation(
                     "Outbox message {Id} of type {Type} processed successfully",
                     message.Id, message.Type);
             }
@@ -127,23 +155,25 @@ public sealed class OutboxProcessor(
             {
                 var nextRetryCount = message.RetryCount + 1;
 
-                if (nextRetryCount >= options.Value.MaxRetryCount)
+                if (nextRetryCount >= _options.Value.MaxRetryCount)
                 {
                     await db.Database.ExecuteSqlRawAsync(
-                        schemaProvider.GetDeadLetterSql(),
+                        _schemaProvider.GetDeadLetterSql(),
                         ex.Message, message.Id);
-                    logger.LogWarning(
+                    _deadLetteredCounter.Add(1, new KeyValuePair<string, object?>("message.type", message.Type));
+                    _logger.LogWarning(
                         "Outbox message {Id} of type {Type} moved to dead letter after {RetryCount} retries",
                         message.Id, message.Type, nextRetryCount);
                 }
                 else
                 {
                     await db.Database.ExecuteSqlRawAsync(
-                        schemaProvider.GetMarkFailedSql(),
+                        _schemaProvider.GetMarkFailedSql(),
                         ex.Message, message.Id);
-                    logger.LogError(ex,
+                    _failedCounter.Add(1, new KeyValuePair<string, object?>("message.type", message.Type));
+                    _logger.LogError(ex,
                         "Failed to process outbox message {Id} of type {Type}, retry {RetryCount} of {MaxRetryCount}",
-                        message.Id, message.Type, nextRetryCount, options.Value.MaxRetryCount);
+                        message.Id, message.Type, nextRetryCount, _options.Value.MaxRetryCount);
                 }
             }
         }

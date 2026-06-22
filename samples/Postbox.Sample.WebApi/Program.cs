@@ -14,11 +14,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
-
-builder.Services.AddSingleton<OutboxInterceptor>(sp =>
-    new OutboxInterceptor(
-        TimeProvider.System,
-        sp.GetRequiredService<IOptions<OutboxOptions>>()));
+builder.Services.AddPostbox();
 
 var dbProvider = builder.Configuration["DbProvider"]; // "Postgres" or "SqlServer"
 
@@ -49,8 +45,6 @@ builder.Services.AddScoped<DbContext>(sp => sp.GetRequiredService<AppDbContext>(
 builder.Services.AddRabbitMQTransport(
     hostName: "127.0.0.1",
     port: 6572);
-builder.Services.AddOptions<OutboxOptions>();
-builder.Services.AddHostedService<OutboxProcessor>();
 
 var app = builder.Build();
 
