@@ -20,9 +20,16 @@ public sealed class SqlServerSchemaProvider : IOutboxSchemaProvider
                 [RetryCount]     INT              NOT NULL DEFAULT 0,
                 [LockedUntil]    DATETIME2        NULL
             );
-            CREATE INDEX [IX_OutboxMessages_Unprocessed]
-                ON [postbox].[OutboxMessages] ([ProcessedOnUtc])
-                WHERE [ProcessedOnUtc] IS NULL;
+        END
+
+        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_OutboxMessages_Unprocessed' AND object_id = OBJECT_ID('postbox.OutboxMessages'))
+        BEGIN
+            EXEC sp_executesql N'
+                SET QUOTED_IDENTIFIER ON;
+                CREATE INDEX [IX_OutboxMessages_Unprocessed]
+                    ON [postbox].[OutboxMessages] ([ProcessedOnUtc])
+                    WHERE [ProcessedOnUtc] IS NULL;
+            ';
         END
 
         IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'OutboxDeadLetters' AND schema_id = SCHEMA_ID('postbox'))
