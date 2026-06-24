@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Postbox.Benchmarks/Postbox.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/Postbox.Sample.WebApi/Postbox.Sample.WebApi.csproj" />
   </Folder>
