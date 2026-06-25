@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <Version>1.0.0-alpha.1</Version>
+    <Authors>Shawn Fernandes</Authors>
+    <Description>Transactional outbox pattern for EF Core with pluggable message transports.</Description>
+    <PackageProjectUrl>https://github.com/shawnfeds/Postbox</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/shawnfeds/Postbox</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>outbox;efcore;messaging;rabbitmq;postgresql;sqlserver</PackageTags>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>
