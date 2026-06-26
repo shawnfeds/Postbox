@@ -1,5 +1,10 @@
 # Postbox
 
+[![CI](https://github.com/shawnfeds/Postbox/actions/workflows/ci.yml/badge.svg)](https://github.com/shawnfeds/Postbox/actions/workflows/ci.yml)
+[![NuGet](https://img.shields.io/nuget/v/Postbox.Core)](https://www.nuget.org/packages/Postbox.Core)
+[![Downloads](https://img.shields.io/nuget/dt/Postbox.Core)](https://www.nuget.org/packages/Postbox.Core)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A transactional outbox implementation for EF Core that guarantees at-least-once message delivery by writing domain events to your database within the same transaction as your business data, then reliably dispatching them to your message broker via a background processor.
 
 ## The Problem
@@ -235,4 +240,4 @@ benchmarks/
 
 ## License
 
-This project is licensed under the MIT License—see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
